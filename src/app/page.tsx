@@ -2,7 +2,28 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Badge, Button, Card, Input } from "@/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  PageHeader,
+  SectionTitle,
+  Spinner,
+  StatCard,
+  StatusBadge,
+} from "@/components/ui";
+import {
+  ArrowRight,
+  Bot,
+  CheckCircle2,
+  Lightbulb,
+  PanelsTopLeft,
+  Sparkles,
+  UserCircle2,
+} from "lucide-react";
 
 type Post = {
   id: string;
@@ -26,18 +47,24 @@ export default function DashboardPage() {
   const [idea, setIdea] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
 
   async function load() {
-    const [p, t, x, h] = await Promise.all([
-      fetch("/api/posts").then((r) => r.json()),
-      fetch("/api/topics").then((r) => r.json()),
-      fetch("/api/x/status").then((r) => r.json()),
-      fetch("/api/health").then((r) => r.json()),
-    ]);
-    setPosts(p.posts ?? []);
-    setTopics(t.topics ?? []);
-    setXStatus(x);
-    setAiOk(Boolean(h.features?.ai));
+    try {
+      const [p, t, x, h] = await Promise.all([
+        fetch("/api/posts").then((r) => r.json()),
+        fetch("/api/topics").then((r) => r.json()),
+        fetch("/api/x/status").then((r) => r.json()),
+        fetch("/api/health").then((r) => r.json()),
+      ]);
+      setPosts(p.posts ?? []);
+      setTopics(t.topics ?? []);
+      setXStatus(x);
+      setAiOk(Boolean(h.features?.ai));
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -48,6 +75,7 @@ export default function DashboardPage() {
     if (!idea.trim()) return;
     setBusy(true);
     setMsg("");
+    setError("");
     try {
       const res = await fetch("/api/posts", {
         method: "POST",
@@ -60,138 +88,258 @@ export default function DashboardPage() {
       });
       if (!res.ok) throw new Error("Failed to create");
       setIdea("");
-      setMsg("Idea captured → Board");
+      setMsg("Idea captured — find it on the Board");
       await load();
     } catch (e) {
-      setMsg((e as Error).message);
+      setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
 
-  const ready = posts.filter((p) => p.status === "ready" || p.status === "scheduled");
-  const drafting = posts.filter((p) => p.status === "drafting" || p.status === "idea");
+  const ready = posts.filter(
+    (p) => p.status === "ready" || p.status === "scheduled"
+  );
+  const drafting = posts.filter(
+    (p) => p.status === "drafting" || p.status === "idea"
+  );
+  const posted = posts.filter((p) => p.status === "posted");
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center gap-2 text-sm text-zinc-500">
+        <Spinner /> Loading studio…
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-        <p className="mt-1 text-sm text-zinc-400">
-          Plan posts that fit your voice — draft-first, localhost-first.
-        </p>
-      </div>
+    <div className="animate-fade-up space-y-8">
+      <PageHeader
+        kicker="Home"
+        title="Content Studio"
+        description="Capture ideas, draft in your voice, and ship posts with a clear pipeline."
+        actions={
+          <Link href="/board">
+            <Button variant="secondary" size="sm">
+              Open board <ArrowRight size={14} />
+            </Button>
+          </Link>
+        }
+      />
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Card>
-          <div className="text-xs text-zinc-500">X account</div>
-          <div className="mt-1 font-medium">
-            {xStatus?.connected ? (
-              <>
-                @{xStatus.username}{" "}
-                <Badge className="ml-1">connected</Badge>
-              </>
-            ) : (
-              <>
-                Not connected{" "}
-                <Link href="/settings" className="text-sky-400 underline">
-                  Settings
-                </Link>
-              </>
-            )}
-          </div>
-        </Card>
-        <Card>
-          <div className="text-xs text-zinc-500">AI (Grok)</div>
-          <div className="mt-1 font-medium">
-            {aiOk ? (
-              <span className="text-emerald-400">Configured</span>
-            ) : (
-              <span className="text-amber-400">
-                Set XAI_API_KEY in .env
+      <div className="grid gap-3 sm:grid-cols-3">
+        <StatCard
+          label="X account"
+          tone={xStatus?.connected ? "success" : "warning"}
+          icon={<UserCircle2 size={16} />}
+          value={
+            xStatus?.connected ? (
+              <span className="flex flex-wrap items-center gap-2">
+                @{xStatus.username}
+                <Badge tone="success">connected</Badge>
               </span>
-            )}
-          </div>
-        </Card>
-        <Card>
-          <div className="text-xs text-zinc-500">Pipeline</div>
-          <div className="mt-1 font-medium">
-            {drafting.length} in progress · {ready.length} ready
-          </div>
-        </Card>
+            ) : (
+              <span className="text-amber-200/90">Not connected</span>
+            )
+          }
+          hint={
+            !xStatus?.connected ? (
+              <Link href="/settings" className="text-sky-400 hover:underline">
+                Connect in Settings →
+              </Link>
+            ) : xStatus.canPost ? (
+              "API posting available"
+            ) : (
+              "Draft-first mode"
+            )
+          }
+        />
+        <StatCard
+          label="AI (Grok)"
+          tone={aiOk ? "success" : "warning"}
+          icon={<Bot size={16} />}
+          value={
+            aiOk ? (
+              <span className="text-emerald-300">Ready</span>
+            ) : (
+              <span className="text-amber-200/90">Not configured</span>
+            )
+          }
+          hint={aiOk ? "Drafts & polish available" : "Set XAI_API_KEY in .env"}
+        />
+        <StatCard
+          label="Pipeline"
+          tone="info"
+          icon={<PanelsTopLeft size={16} />}
+          value={
+            <span>
+              {drafting.length}{" "}
+              <span className="font-normal text-zinc-400">in progress</span>
+              {" · "}
+              {ready.length}{" "}
+              <span className="font-normal text-zinc-400">ready</span>
+            </span>
+          }
+          hint={`${posted.length} posted`}
+        />
       </div>
 
-      <Card>
-        <h2 className="text-sm font-medium text-zinc-200">Quick capture</h2>
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <Input
-            placeholder="Idea, hot take, or note…"
-            value={idea}
-            onChange={(e) => setIdea(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && quickCapture()}
-          />
-          <Button onClick={quickCapture} disabled={busy || !idea.trim()}>
-            Save idea
-          </Button>
+      <Card className="relative overflow-hidden">
+        <div className="pointer-events-none absolute -right-10 -top-16 size-48 rounded-full bg-sky-500/10 blur-3xl" />
+        <div className="relative">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="grid size-8 place-items-center rounded-lg bg-sky-500/15 text-sky-300">
+              <Sparkles size={15} />
+            </span>
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-100">
+                Quick capture
+              </h2>
+              <p className="text-xs text-zinc-500">
+                Drop a thought — polish it later on the board.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              placeholder="Idea, hot take, or note…"
+              value={idea}
+              onChange={(e) => setIdea(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && quickCapture()}
+              className="sm:flex-1"
+              aria-label="Quick idea"
+            />
+            <Button
+              onClick={quickCapture}
+              disabled={busy || !idea.trim()}
+              loading={busy}
+            >
+              Save idea
+            </Button>
+          </div>
+          {msg && (
+            <Alert tone="success" className="mt-3">
+              {msg}{" "}
+              <Link href="/board" className="underline">
+                Open board
+              </Link>
+            </Alert>
+          )}
+          {error && (
+            <Alert tone="danger" className="mt-3">
+              {error}
+            </Alert>
+          )}
         </div>
-        {msg && <p className="mt-2 text-xs text-zinc-400">{msg}</p>}
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-medium">Ready / scheduled</h2>
-            <Link href="/board" className="text-xs text-sky-400">
-              Open board
-            </Link>
-          </div>
-          <ul className="space-y-2">
-            {ready.length === 0 && (
-              <li className="text-sm text-zinc-500">Nothing ready yet.</li>
-            )}
-            {ready.slice(0, 8).map((p) => (
-              <li key={p.id}>
-                <Link
-                  href={`/posts/${p.id}`}
-                  className="block rounded-lg border border-zinc-800 px-3 py-2 hover:border-zinc-600"
-                >
-                  <div className="flex items-center gap-2">
-                    <Badge>{p.status}</Badge>
-                    <span className="truncate text-sm">
+          <SectionTitle
+            action={
+              <Link
+                href="/board"
+                className="text-xs font-medium text-sky-400 hover:text-sky-300"
+              >
+                Open board
+              </Link>
+            }
+          >
+            Ready / scheduled
+          </SectionTitle>
+          {ready.length === 0 ? (
+            <EmptyState
+              icon={<CheckCircle2 size={18} />}
+              title="Nothing ready yet"
+              description="Move drafts to Ready on the board when they’re shippable."
+              action={
+                <Link href="/board">
+                  <Button size="sm" variant="secondary">
+                    Go to board
+                  </Button>
+                </Link>
+              }
+            />
+          ) : (
+            <ul className="space-y-2">
+              {ready.slice(0, 8).map((p) => (
+                <li key={p.id}>
+                  <Link
+                    href={`/posts/${p.id}`}
+                    className="group flex items-center gap-3 rounded-xl border border-white/[0.06] bg-black/15 px-3 py-2.5 transition hover:border-sky-500/30 hover:bg-sky-500/[0.06]"
+                  >
+                    <StatusBadge status={p.status} />
+                    <span className="min-w-0 flex-1 truncate text-sm text-zinc-200 group-hover:text-white">
                       {p.title || p.body.slice(0, 80) || "Untitled"}
                     </span>
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
+                    <ArrowRight
+                      size={14}
+                      className="shrink-0 text-zinc-600 transition group-hover:text-sky-400"
+                    />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
 
         <Card>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-medium">Topics</h2>
-            <Link href="/topics" className="text-xs text-sky-400">
-              Manage
-            </Link>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {topics.map((t) => (
+          <SectionTitle
+            action={
               <Link
-                key={t.id}
-                href={`/topics`}
-                className="rounded-full border border-zinc-700 px-3 py-1 text-sm"
-                style={{ borderColor: t.color ?? undefined }}
+                href="/topics"
+                className="text-xs font-medium text-sky-400 hover:text-sky-300"
               >
-                {t.name}
+                Manage
               </Link>
+            }
+          >
+            Topics
+          </SectionTitle>
+          {topics.length === 0 ? (
+            <EmptyState
+              icon={<Lightbulb size={18} />}
+              title="No topics yet"
+              description="Topics are seeded on first DB init."
+            />
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {topics.map((t) => (
+                <Link
+                  key={t.id}
+                  href="/topics"
+                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.06]"
+                >
+                  <span
+                    className="size-2 rounded-full"
+                    style={{ background: t.color ?? "#64748b" }}
+                  />
+                  {t.name}
+                </Link>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-5 space-y-2 rounded-xl border border-white/[0.06] bg-black/20 p-3">
+            <p className="text-[0.7rem] font-semibold uppercase tracking-wider text-zinc-500">
+              Workflow
+            </p>
+            {[
+              "Capture ideas or generate with AI on Topics",
+              "Polish in the editor → mark Ready",
+              "Copy, Open Intent, or Post to X when ready",
+            ].map((step, i) => (
+              <div
+                key={step}
+                className="flex items-start gap-2.5 text-xs text-zinc-400"
+              >
+                <span className="grid size-5 shrink-0 place-items-center rounded-md bg-white/[0.06] text-[0.65rem] font-semibold text-sky-300">
+                  {i + 1}
+                </span>
+                <span className="pt-0.5 leading-relaxed">{step}</span>
+              </div>
             ))}
-            {topics.length === 0 && (
-              <p className="text-sm text-zinc-500">Seeding topics…</p>
-            )}
-          </div>
-          <div className="mt-4 space-y-1 text-xs text-zinc-500">
-            <p>1. Capture ideas or use AI drafts on Topics / Board</p>
-            <p>2. Polish in the editor → mark Ready</p>
-            <p>3. Copy or Open Intent to post on X</p>
           </div>
         </Card>
       </div>

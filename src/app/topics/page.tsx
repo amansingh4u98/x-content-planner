@@ -2,7 +2,25 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card, Input, Label, Textarea } from "@/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  Label,
+  PageHeader,
+  Spinner,
+  Textarea,
+} from "@/components/ui";
+import {
+  ExternalLink,
+  FlaskConical,
+  Lightbulb,
+  Plus,
+  Sparkles,
+} from "lucide-react";
 
 type Topic = {
   id: string;
@@ -23,17 +41,28 @@ export default function TopicsPage() {
   const [angles, setAngles] = useState("");
   const [ideaSeed, setIdeaSeed] = useState("");
   const [ideas, setIdeas] = useState<string[]>([]);
+  const [research, setResearch] = useState<{
+    id: string;
+    summary: string;
+    citationsJson: string;
+  } | null>(null);
   const [aiEnabled, setAiEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
+  const [loading, setLoading] = useState(true);
 
   async function load() {
-    const [t, h] = await Promise.all([
-      fetch("/api/topics").then((r) => r.json()),
-      fetch("/api/health").then((r) => r.json()),
-    ]);
-    setTopics(t.topics ?? []);
-    setAiEnabled(Boolean(h.features?.ai));
+    try {
+      const [t, h] = await Promise.all([
+        fetch("/api/topics").then((r) => r.json()),
+        fetch("/api/health").then((r) => r.json()),
+      ]);
+      setTopics(t.topics ?? []);
+      setAiEnabled(Boolean(h.features?.ai));
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -53,12 +82,15 @@ export default function TopicsPage() {
       })()
     );
     setIdeas([]);
+    setResearch(null);
     setError("");
+    setMsg("");
   }
 
   async function createTopic() {
     if (!name.trim()) return;
     setBusy(true);
+    setError("");
     try {
       const res = await fetch("/api/topics", {
         method: "POST",
@@ -66,10 +98,12 @@ export default function TopicsPage() {
         body: JSON.stringify({ name }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "Create failed");
+      if (!res.ok)
+        throw new Error(data.message || data.error || "Create failed");
       setName("");
       await load();
       if (data.topic) select(data.topic);
+      setMsg("Topic created");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -77,22 +111,36 @@ export default function TopicsPage() {
     }
   }
 
+  function parseAnglesFromForm(): string[] {
+    return angles
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  /** Persist current form notes/angles so reloads and other clients stay in sync. */
+  async function persistTopicContext(): Promise<{
+    notes: string;
+    angles: string[];
+  }> {
+    if (!selected) throw new Error("No topic selected");
+    const angleList = parseAnglesFromForm();
+    const res = await fetch(`/api/topics/${selected.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes, angles: angleList }),
+    });
+    if (!res.ok) throw new Error("Could not save topic notes/angles");
+    return { notes, angles: angleList };
+  }
+
   async function saveTopic() {
     if (!selected) return;
     setBusy(true);
+    setError("");
     try {
-      const res = await fetch(`/api/topics/${selected.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          notes,
-          angles: angles
-            .split("\n")
-            .map((s) => s.trim())
-            .filter(Boolean),
-        }),
-      });
-      if (!res.ok) throw new Error("Save failed");
+      await persistTopicContext();
+      setMsg("Topic saved");
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -105,7 +153,9 @@ export default function TopicsPage() {
     if (!selected) return;
     setBusy(true);
     setError("");
+    setMsg("");
     try {
+      const ctx = await persistTopicContext();
       const res = await fetch("/api/ai/ideas", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -113,11 +163,54 @@ export default function TopicsPage() {
           topicId: selected.id,
           count: 5,
           seed: ideaSeed || undefined,
+          notes: ctx.notes,
+          angles: ctx.angles,
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "AI failed");
+      if (!res.ok)
+        throw new Error(data.message || data.error || "AI failed");
       setIdeas(data.ideas ?? []);
+      const grounded =
+        ctx.angles.length || ctx.notes.trim()
+          ? " using your notes/angles"
+          : "";
+      setMsg(`${(data.ideas ?? []).length} ideas generated${grounded}`);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function researchTopic() {
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const ctx = await persistTopicContext();
+      const res = await fetch("/api/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topicId: selected.id,
+          direction: ideaSeed || undefined,
+          notes: ctx.notes,
+          angles: ctx.angles,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok)
+        throw new Error(data.message || data.error || "Research failed");
+      setResearch(data.brief);
+      const grounded =
+        ctx.angles.length || ctx.notes.trim() || ideaSeed.trim()
+          ? " focused on your notes/angles"
+          : "";
+      setMsg(`Research brief ready${grounded}`);
+      await load();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -130,6 +223,7 @@ export default function TopicsPage() {
     setBusy(true);
     setError("");
     try {
+      const ctx = await persistTopicContext();
       const res = await fetch("/api/ai/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -138,10 +232,14 @@ export default function TopicsPage() {
           idea,
           format: "single",
           save: true,
+          researchBriefId: research?.id,
+          notes: ctx.notes,
+          angles: ctx.angles,
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Draft failed");
+      if (!res.ok)
+        throw new Error(data.message || data.error || "Draft failed");
       if (data.post?.id) router.push(`/posts/${data.post.id}`);
     } catch (e) {
       setError((e as Error).message);
@@ -150,71 +248,115 @@ export default function TopicsPage() {
     }
   }
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Topics</h1>
-        <p className="mt-1 text-sm text-zinc-400">
-          Organize angles and notes. Seeded: AI, Software Engineering, Cricket,
-          Football.
-        </p>
+  if (loading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center gap-2 text-sm text-zinc-500">
+        <Spinner /> Loading topics…
       </div>
+    );
+  }
+
+  return (
+    <div className="animate-fade-up space-y-6">
+      <PageHeader
+        kicker="Library"
+        title="Topics"
+        description="Organize angles and notes. Generate ideas and research briefs that sound like you."
+      />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-1 space-y-3">
+        <Card className="space-y-3 lg:col-span-1">
           <div className="flex gap-2">
             <Input
               placeholder="New topic name"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && createTopic()}
             />
-            <Button onClick={createTopic} disabled={busy}>
-              Add
+            <Button onClick={createTopic} disabled={busy || !name.trim()}>
+              <Plus size={14} />
             </Button>
           </div>
           <ul className="space-y-1">
-            {topics.map((t) => (
-              <li key={t.id}>
-                <button
-                  type="button"
-                  onClick={() => select(t)}
-                  className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
-                    selected?.id === t.id
-                      ? "border-sky-600 bg-sky-950/40"
-                      : "border-zinc-800 hover:border-zinc-600"
-                  }`}
-                >
-                  <span
-                    className="mr-2 inline-block h-2 w-2 rounded-full"
-                    style={{ background: t.color ?? "#64748b" }}
-                  />
-                  {t.name}
-                </button>
-              </li>
-            ))}
+            {topics.map((t) => {
+              const active = selected?.id === t.id;
+              return (
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    onClick={() => select(t)}
+                    className={`flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left text-sm transition ${
+                      active
+                        ? "border-sky-500/40 bg-sky-500/10 text-white shadow-sm shadow-sky-950/30"
+                        : "border-transparent bg-white/[0.02] text-zinc-300 hover:border-white/10 hover:bg-white/[0.05]"
+                    }`}
+                  >
+                    <span
+                      className="size-2.5 shrink-0 rounded-full ring-2 ring-white/10"
+                      style={{ background: t.color ?? "#64748b" }}
+                    />
+                    <span className="truncate font-medium">{t.name}</span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
+          {topics.length === 0 && (
+            <EmptyState
+              icon={<Lightbulb size={16} />}
+              title="No topics"
+              description="Add your first topic above."
+            />
+          )}
         </Card>
 
-        <Card className="lg:col-span-2 space-y-4">
+        <Card className="space-y-4 lg:col-span-2">
           {!selected && (
-            <p className="text-sm text-zinc-500">Select a topic to edit.</p>
+            <EmptyState
+              icon={<Lightbulb size={18} />}
+              title="Select a topic"
+              description="Pick a topic from the list to edit notes, angles, and run AI."
+            />
           )}
           {selected && (
             <>
-              <div>
-                <h2 className="text-lg font-medium">{selected.name}</h2>
-                <p className="text-sm text-zinc-500">
-                  {selected.description}
-                </p>
-                <Badge className="mt-2">{selected.slug}</Badge>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight">
+                    {selected.name}
+                  </h2>
+                  {selected.description && (
+                    <p className="mt-0.5 text-sm text-zinc-500">
+                      {selected.description}
+                    </p>
+                  )}
+                  <Badge className="mt-2" tone="info">
+                    {selected.slug}
+                  </Badge>
+                </div>
+                <Button
+                  onClick={saveTopic}
+                  disabled={busy}
+                  loading={busy}
+                  variant="secondary"
+                  size="sm"
+                >
+                  Save topic
+                </Button>
               </div>
+
               <div>
-                <Label>Notes (sources, angles, constraints)</Label>
+                <Label>Notes (sources, constraints, context)</Label>
                 <Textarea
                   rows={4}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
+                  placeholder="People, products, events, or constraints the AI should ground on…"
                 />
+                <p className="mt-1.5 text-[0.7rem] text-zinc-500">
+                  Used by Research, Generate ideas, and Draft — auto-saved when
+                  you run those actions.
+                </p>
               </div>
               <div>
                 <Label>Angles (one per line)</Label>
@@ -222,42 +364,108 @@ export default function TopicsPage() {
                   rows={3}
                   value={angles}
                   onChange={(e) => setAngles(e.target.value)}
+                  placeholder={"Contrarian take\nBeginner explainer\nCase study"}
                 />
+                <p className="mt-1.5 text-[0.7rem] text-zinc-500">
+                  Research and ideas will prioritize these over a generic topic
+                  search.
+                </p>
               </div>
-              <Button onClick={saveTopic} disabled={busy} variant="secondary">
-                Save topic
-              </Button>
 
-              <div className="border-t border-zinc-800 pt-4">
-                <h3 className="text-sm font-medium">AI ideas → draft</h3>
+              <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-sky-500/[0.07] to-transparent p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="grid size-8 place-items-center rounded-lg bg-sky-500/15 text-sky-300">
+                    <Sparkles size={15} />
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-semibold">AI ideas → draft</h3>
+                    <p className="text-xs text-zinc-500">
+                      Generate angles, research, then draft in one click.
+                    </p>
+                  </div>
+                </div>
+
                 {!aiEnabled && (
-                  <p className="mt-1 text-xs text-amber-400">
-                    AI disabled — add XAI_API_KEY to .env and restart.
-                  </p>
+                  <Alert tone="warning" className="mb-3">
+                    AI disabled — add <code className="text-amber-100">XAI_API_KEY</code> to
+                    .env and restart.
+                  </Alert>
                 )}
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+
+                <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
                     placeholder="Optional seed direction"
                     value={ideaSeed}
                     onChange={(e) => setIdeaSeed(e.target.value)}
                     disabled={!aiEnabled}
+                    className="sm:flex-1"
                   />
                   <Button
                     onClick={generateIdeas}
                     disabled={busy || !aiEnabled}
+                    loading={busy}
                   >
                     Generate ideas
                   </Button>
+                  <Button
+                    onClick={researchTopic}
+                    disabled={busy || !aiEnabled}
+                    variant="secondary"
+                  >
+                    <FlaskConical size={14} /> Research
+                  </Button>
                 </div>
+
+                {research && (
+                  <div className="mt-3 rounded-xl border border-sky-400/20 bg-sky-950/30 p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-sky-300">
+                      Research brief
+                    </p>
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
+                      {research.summary}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {(() => {
+                        try {
+                          return (
+                            JSON.parse(research.citationsJson) as Array<{
+                              url: string;
+                              label?: string;
+                            }>
+                          )
+                            .slice(0, 8)
+                            .map((citation) => (
+                              <a
+                                key={citation.url}
+                                href={citation.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 rounded-full border border-sky-400/20 bg-sky-500/10 px-2.5 py-1 text-[0.7rem] text-sky-300 hover:bg-sky-500/20"
+                              >
+                                {citation.label || "Source"}
+                                <ExternalLink size={10} />
+                              </a>
+                            ));
+                        } catch {
+                          return null;
+                        }
+                      })()}
+                    </div>
+                  </div>
+                )}
+
                 <ul className="mt-3 space-y-2">
                   {ideas.map((idea) => (
                     <li
                       key={idea}
-                      className="flex items-start justify-between gap-2 rounded-lg border border-zinc-800 px-3 py-2"
+                      className="flex items-start justify-between gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5"
                     >
-                      <span className="text-sm">{idea}</span>
+                      <span className="text-sm leading-relaxed text-zinc-200">
+                        {idea}
+                      </span>
                       <Button
                         variant="secondary"
+                        size="sm"
                         disabled={busy || !aiEnabled}
                         onClick={() => draftFromIdea(idea)}
                       >
@@ -269,9 +477,9 @@ export default function TopicsPage() {
               </div>
             </>
           )}
-          {error && (
-            <p className="text-sm text-red-400">{error}</p>
-          )}
+
+          {msg && <Alert tone="success">{msg}</Alert>}
+          {error && <Alert tone="danger">{error}</Alert>}
         </Card>
       </div>
     </div>

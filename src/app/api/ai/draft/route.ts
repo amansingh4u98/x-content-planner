@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import {
+  aiErrorJson,
   chatJson,
   DraftResultSchema,
   isAiConfigured,
@@ -10,7 +11,7 @@ import { draftUserPrompt } from "@/lib/ai/prompts";
 import { checkAiRateLimit } from "@/lib/ai/rate-limit";
 import { withDb, DEFAULT_PROFILE_ID } from "@/lib/db/bootstrap";
 import { getDb } from "@/lib/db/client";
-import { contentItems, topics } from "@/lib/db/schema";
+import { contentItems, researchBriefs, topics } from "@/lib/db/schema";
 import { newId } from "@/lib/id";
 import { buildSystemPrompt, loadVoiceContext } from "@/lib/services/voice";
 import { nowDate } from "@/lib/utils";
@@ -24,6 +25,11 @@ const BodySchema = z.object({
     .enum(["single", "thread", "hot_take", "educational", "question", "listicle"])
     .default("single"),
   save: z.boolean().default(true),
+  researchBriefId: z.string().optional(),
+  /** Live form notes (preferred over DB when provided). */
+  notes: z.string().max(8000).optional(),
+  /** Live form angles (preferred over DB when provided). */
+  angles: z.array(z.string().max(500)).max(30).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -50,23 +56,35 @@ export async function POST(req: NextRequest) {
       if (!topic) {
         return NextResponse.json({ error: "TOPIC_NOT_FOUND" }, { status: 404 });
       }
-      let angles: string[] = [];
+      let dbAngles: string[] = [];
       try {
-        angles = JSON.parse(topic.anglesJson ?? "[]");
+        const parsed = JSON.parse(topic.anglesJson ?? "[]");
+        dbAngles = Array.isArray(parsed)
+          ? parsed.filter((x): x is string => typeof x === "string")
+          : [];
       } catch {
-        angles = [];
+        dbAngles = [];
       }
+      const angles = body.angles !== undefined ? body.angles : dbAngles;
+      const notes =
+        body.notes !== undefined ? body.notes : (topic.notes ?? "");
 
       const voice = loadVoiceContext();
+      const research = body.researchBriefId
+        ? db.select().from(researchBriefs).where(eq(researchBriefs.id, body.researchBriefId)).get()
+        : null;
+      if (body.researchBriefId && (!research || research.topicId !== topic.id)) {
+        return NextResponse.json({ error: "RESEARCH_BRIEF_NOT_FOUND" }, { status: 404 });
+      }
       const result = await chatJson({
         system: buildSystemPrompt(voice),
-        user: draftUserPrompt({
+        user: `${draftUserPrompt({
           topicName: topic.name,
-          topicNotes: topic.notes ?? "",
+          topicNotes: notes,
           idea: body.idea,
           format: body.format,
           angles,
-        }),
+        })}${research ? `\n\nCurrent research brief (treat claims carefully and retain source URLs where useful):\n${research.summary}` : ""}`,
         schema: DraftResultSchema,
         temperature: 0.7,
         maxTokens: body.format === "thread" ? 2048 : 1024,
@@ -89,7 +107,8 @@ export async function POST(req: NextRequest) {
             threadJson: thread ? JSON.stringify(thread) : null,
             format: body.format,
             source: "ai",
-            metaJson: JSON.stringify({ notes: result.notes ?? "" }),
+            citationsJson: research?.citationsJson ?? "[]",
+            metaJson: JSON.stringify({ notes: result.notes ?? "", researchBriefId: research?.id ?? null }),
             createdAt: now,
             updatedAt: now,
           })
@@ -108,9 +127,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: e.flatten() }, { status: 400 });
     }
     console.error("ai/draft", e);
-    return NextResponse.json(
-      { error: "AI_FAILED", message: (e as Error).message },
-      { status: 500 }
-    );
+    const { body, status } = aiErrorJson(e);
+    return NextResponse.json(body, { status });
   }
 }

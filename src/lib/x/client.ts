@@ -187,3 +187,21 @@ export function canPostFromScopes(scopes: string): boolean {
   const set = new Set(scopes.split(/\s+/).filter(Boolean));
   return config.enableXPosting && set.has("tweet.write");
 }
+
+export async function createPost(opts: { accessToken: string; text: string }): Promise<{ id: string }> {
+  const res = await fetch(`${API}/tweets`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${opts.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text: opts.text }),
+  });
+  if (res.status === 403) throw new Error("X_POST_FORBIDDEN");
+  if (res.status === 401) throw new Error("X_UNAUTHORIZED");
+  if (res.status === 429) throw new Error("X_POST_RATE_LIMITED");
+  if (!res.ok) throw new Error(`X post failed: ${res.status}`);
+  const json = (await res.json()) as { data?: { id?: string } };
+  if (!json.data?.id) throw new Error("X_POST_FAILED");
+  return { id: json.data.id };
+}

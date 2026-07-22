@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import {
+  aiErrorJson,
   chatJson,
   IdeasResultSchema,
   isAiConfigured,
@@ -19,7 +20,22 @@ const BodySchema = z.object({
   topicId: z.string(),
   count: z.number().int().min(1).max(10).default(5),
   seed: z.string().max(1000).optional(),
+  /** Live form notes (preferred over DB when provided). */
+  notes: z.string().max(8000).optional(),
+  /** Live form angles (preferred over DB when provided). */
+  angles: z.array(z.string().max(500)).max(30).optional(),
 });
+
+function parseAnglesJson(raw: string | null | undefined): string[] {
+  try {
+    const parsed = JSON.parse(raw ?? "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 export async function POST(req: NextRequest) {
   if (!isAiConfigured()) {
@@ -44,14 +60,22 @@ export async function POST(req: NextRequest) {
       if (!topic) {
         return NextResponse.json({ error: "TOPIC_NOT_FOUND" }, { status: 404 });
       }
+      const notes =
+        body.notes !== undefined ? body.notes : (topic.notes ?? "");
+      const angles =
+        body.angles !== undefined
+          ? body.angles
+          : parseAnglesJson(topic.anglesJson);
+
       const voice = loadVoiceContext();
       const result = await chatJson({
         system: buildSystemPrompt(voice),
         user: ideasUserPrompt({
           topicName: topic.name,
-          topicNotes: topic.notes ?? "",
+          topicNotes: notes,
           count: body.count,
           seed: body.seed,
+          angles,
         }),
         schema: IdeasResultSchema,
         temperature: 0.8,
@@ -64,9 +88,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: e.flatten() }, { status: 400 });
     }
     console.error("ai/ideas", e);
-    return NextResponse.json(
-      { error: "AI_FAILED", message: (e as Error).message },
-      { status: 500 }
-    );
+    const { body, status } = aiErrorJson(e);
+    return NextResponse.json(body, { status });
   }
 }

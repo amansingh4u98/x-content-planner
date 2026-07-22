@@ -128,5 +128,17 @@ export function ensureSchema(): void {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS variants_content_idx ON content_variants(content_item_id);
+
+    CREATE TABLE IF NOT EXISTS research_briefs (
+      id TEXT PRIMARY KEY,
+      profile_id TEXT NOT NULL,
+      topic_id TEXT NOT NULL,
+      query TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      citations_json TEXT NOT NULL DEFAULT '[]',
+      model_used TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS research_briefs_topic_idx ON research_briefs(topic_id, created_at);
   `);
 }

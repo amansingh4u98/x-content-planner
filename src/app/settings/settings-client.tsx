@@ -2,7 +2,24 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Badge, Button, Card, Label, Textarea } from "@/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Label,
+  PageHeader,
+  SectionTitle,
+  Spinner,
+  Textarea,
+} from "@/components/ui";
+import {
+  Link2,
+  Mic2,
+  RefreshCw,
+  Shield,
+  Unplug,
+} from "lucide-react";
 
 export function SettingsClient() {
   const sp = useSearchParams();
@@ -23,16 +40,21 @@ export function SettingsClient() {
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   async function load() {
-    const [x, h] = await Promise.all([
-      fetch("/api/x/status").then((r) => r.json()),
-      fetch("/api/health").then((r) => r.json()),
-    ]);
-    setStatus(x);
-    setHealth(h);
-    setSummary(x.voice?.summary ?? "");
-    setStyleNotes(x.voice?.styleNotes ?? "");
+    try {
+      const [x, h] = await Promise.all([
+        fetch("/api/x/status").then((r) => r.json()),
+        fetch("/api/health").then((r) => r.json()),
+      ]);
+      setStatus(x);
+      setHealth(h);
+      setSummary(x.voice?.summary ?? "");
+      setStyleNotes(x.voice?.styleNotes ?? "");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -112,43 +134,67 @@ export function SettingsClient() {
     }
   }
 
-  return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Settings</h1>
-        <p className="text-sm text-zinc-400">
-          X connection, voice profile, and feature flags (via env).
-        </p>
+  if (loading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center gap-2 text-sm text-zinc-500">
+        <Spinner /> Loading settings…
       </div>
+    );
+  }
 
-      <Card className="space-y-3">
-        <h2 className="text-sm font-medium">X account</h2>
+  return (
+    <div className="mx-auto max-w-2xl animate-fade-up space-y-6">
+      <PageHeader
+        kicker="Preferences"
+        title="Settings"
+        description="X connection, voice profile, and feature flags from your environment."
+      />
+
+      {(msg || error) && (
+        <Alert tone={error ? "danger" : "success"}>{error || msg}</Alert>
+      )}
+
+      <Card className="space-y-4">
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-9 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-sky-300">
+            <Link2 size={16} />
+          </span>
+          <div>
+            <SectionTitle className="mb-0">X account</SectionTitle>
+            <p className="text-xs text-zinc-500">
+              OAuth connect for timeline sync and optional posting.
+            </p>
+          </div>
+        </div>
+
         {status?.connected ? (
-          <div className="space-y-2 text-sm">
-            <p>
-              Connected as <strong>@{status.username}</strong>
-            </p>
-            <p className="text-zinc-500">
-              Scopes: {(status.scopes ?? []).join(", ") || "—"}
-            </p>
-            <p className="text-zinc-500">
-              Can API-post:{" "}
-              {status.canPost ? (
-                <Badge className="bg-emerald-900 text-emerald-200">yes</Badge>
-              ) : (
-                <Badge>no (draft-first)</Badge>
-              )}
-            </p>
-            <p className="text-zinc-500">
-              Last sync:{" "}
-              {status.lastSyncAt
-                ? new Date(status.lastSyncAt).toLocaleString()
-                : "never"}
-              {status.partialSync ? " (partial)" : ""}
-            </p>
-            <div className="flex flex-wrap gap-2 pt-1">
-              <Button onClick={sync} disabled={busy}>
-                Sync timeline
+          <div className="space-y-3">
+            <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
+              <p className="font-medium text-zinc-100">
+                Connected as{" "}
+                <span className="text-sky-300">@{status.username}</span>
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                Scopes: {(status.scopes ?? []).join(", ") || "—"}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {status.canPost ? (
+                  <Badge tone="success">API post: yes</Badge>
+                ) : (
+                  <Badge tone="warning">API post: draft-first</Badge>
+                )}
+                <Badge tone="neutral">
+                  Last sync:{" "}
+                  {status.lastSyncAt
+                    ? new Date(status.lastSyncAt).toLocaleString()
+                    : "never"}
+                  {status.partialSync ? " (partial)" : ""}
+                </Badge>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={sync} disabled={busy} loading={busy}>
+                <RefreshCw size={14} /> Sync timeline
               </Button>
               <a href="/api/auth/x/start?intent=posting">
                 <Button type="button" variant="secondary" disabled={busy}>
@@ -156,17 +202,17 @@ export function SettingsClient() {
                 </Button>
               </a>
               <Button variant="danger" onClick={disconnect} disabled={busy}>
-                Disconnect
+                <Unplug size={14} /> Disconnect
               </Button>
             </div>
           </div>
         ) : (
-          <div className="space-y-2 text-sm">
-            <p className="text-zinc-400">
-              Not connected. Requires X developer app credentials in{" "}
-              <code className="text-zinc-300">.env</code> (see README). You can
-              still plan offline and use AI with voice notes.
-            </p>
+          <div className="space-y-3">
+            <Alert tone="info">
+              Not connected. Add X developer app credentials in{" "}
+              <code className="text-sky-100">.env</code> (see README). You can
+              still plan offline and use AI with manual voice notes.
+            </Alert>
             <a href="/api/auth/x/start">
               <Button type="button" disabled={busy}>
                 Connect X
@@ -176,12 +222,18 @@ export function SettingsClient() {
         )}
       </Card>
 
-      <Card className="space-y-3">
-        <h2 className="text-sm font-medium">Voice profile</h2>
-        <p className="text-xs text-zinc-500">
-          Used as context for Grok drafts. Edit manually anytime, or rebuild
-          from synced tweets when AI + X are available.
-        </p>
+      <Card className="space-y-4">
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-9 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-violet-300">
+            <Mic2 size={16} />
+          </span>
+          <div>
+            <SectionTitle className="mb-0">Voice profile</SectionTitle>
+            <p className="text-xs text-zinc-500">
+              Context for Grok drafts — edit anytime or rebuild from tweets.
+            </p>
+          </div>
+        </div>
         <div>
           <Label>Summary</Label>
           <Textarea
@@ -200,8 +252,14 @@ export function SettingsClient() {
             placeholder="Do: dry humor. Don't: engagement bait…"
           />
         </div>
+        {status?.voice?.rebuiltAt && (
+          <p className="text-xs text-zinc-500">
+            Last AI rebuild:{" "}
+            {new Date(status.voice.rebuiltAt).toLocaleString()}
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
-          <Button onClick={saveVoice} disabled={busy}>
+          <Button onClick={saveVoice} disabled={busy} loading={busy}>
             Save voice
           </Button>
           <Button
@@ -214,29 +272,36 @@ export function SettingsClient() {
         </div>
       </Card>
 
-      <Card className="space-y-2 text-sm">
-        <h2 className="text-sm font-medium">Feature flags (env)</h2>
-        <ul className="space-y-1 text-zinc-400">
-          <li>
-            AI:{" "}
+      <Card className="space-y-3">
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-9 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-zinc-400">
+            <Shield size={16} />
+          </span>
+          <SectionTitle className="mb-0">Feature flags (env)</SectionTitle>
+        </div>
+        <ul className="space-y-2 text-sm">
+          <li className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-black/15 px-3 py-2">
+            <span className="text-zinc-400">AI (XAI_API_KEY)</span>
             {health?.features?.ai ? (
-              <span className="text-emerald-400">on</span>
+              <Badge tone="success">on</Badge>
             ) : (
-              <span className="text-amber-400">off (XAI_API_KEY)</span>
+              <Badge tone="warning">off</Badge>
             )}
           </li>
-          <li>ENABLE_X_SYNC: {String(health?.features?.xSync ?? false)}</li>
-          <li>
-            ENABLE_X_POSTING: {String(health?.features?.xPosting ?? false)}
+          <li className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-black/15 px-3 py-2">
+            <span className="text-zinc-400">ENABLE_X_SYNC</span>
+            <Badge tone={health?.features?.xSync ? "success" : "neutral"}>
+              {String(health?.features?.xSync ?? false)}
+            </Badge>
+          </li>
+          <li className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-black/15 px-3 py-2">
+            <span className="text-zinc-400">ENABLE_X_POSTING</span>
+            <Badge tone={health?.features?.xPosting ? "success" : "neutral"}>
+              {String(health?.features?.xPosting ?? false)}
+            </Badge>
           </li>
         </ul>
       </Card>
-
-      {(msg || error) && (
-        <p className={`text-sm ${error ? "text-red-400" : "text-emerald-400"}`}>
-          {error || msg}
-        </p>
-      )}
     </div>
   );
 }

@@ -6,9 +6,10 @@
 | **Project name** | `x-content-planner` |
 | **Author** | Aman (solo) |
 | **Date** | 2026-07-21 |
-| **Status** | Draft (revised) |
+| **Status** | Living design (MVP + Phase 2 publish + research shipped) |
 | **Audience** | Solo engineer / future collaborators |
-| **Revision** | 2026-07-21 — addressed design review issues 1–17 |
+| **Revision** | 2026-07-22 — research/angles grounding, UI system, IMPLEMENTATION as runtime SoT |
+| **Runtime truth** | [IMPLEMENTATION.md](./IMPLEMENTATION.md) (what code does today) |
 
 ---
 
@@ -16,7 +17,7 @@
 
 **X Content Planner** is a personal content operating system for planning, drafting, and shipping posts on X (Twitter) that sound like the user—not a generic LLM. It connects an X account, builds a lightweight **voice/profile model** from recent posts and user preferences, organizes ideas by **topic**, and runs a **pipeline** from idea → draft → polish → ready-to-post (with optional later scheduling and posting).
 
-This is a **greenfield, single-user MVP** designed to ship in roughly **2–4 weeks** for a solo developer (OAuth developer-portal setup often dominates calendar time). The recommended stack is **Next.js (App Router) + SQLite (local-first, Node runtime only) + official X API v2 (OAuth 2.0) + xAI Grok** for AI drafting. Posting to X is **draft-first in MVP** (copy to clipboard / Web Intent for singles; per-part copy for threads) with full API posting gated behind paid X API access and an explicit feature flag.
+This is a **greenfield, single-user MVP** designed to ship in roughly **2–4 weeks** for a solo developer (OAuth developer-portal setup often dominates calendar time). The recommended stack is **Next.js (App Router) + SQLite (local-first, Node runtime only) + official X API v2 (OAuth 2.0) + xAI Grok** for AI drafting. The implementation now includes web-backed research briefs and direct single-post publishing behind an explicit feature flag; threads remain copy/Intent-first. See [IMPLEMENTATION.md](./IMPLEMENTATION.md) for the current state.
 
 ---
 
@@ -33,7 +34,7 @@ Creators and engineers who post on X often:
 
 ### Current state
 
-There is no existing app codebase. The user works as a solo developer with interests in **Software Engineering, AI, Cricket, and Football (soccer)**. Tooling preference for AI is **xAI / Grok** (`XAI_API_KEY`, `https://api.x.ai/v1`, model `grok-4.5`).
+**Implemented** as a local Next.js + SQLite app (UI brand: **Content Studio**). Seed interests: **Software Engineering, AI, Cricket, Football**. AI: **xAI / Grok** (`XAI_API_KEY`, `https://api.x.ai/v1`, model `grok-4.5`). See [IMPLEMENTATION.md](./IMPLEMENTATION.md) for shipped APIs and limits.
 
 ### Pain points this product addresses
 
@@ -41,9 +42,10 @@ There is no existing app codebase. The user works as a solo developer with inter
 |------|------------------|
 | Scattered ideas | Topic library + idea capture |
 | Off-voice AI | Profile/voice model from recent tweets + preferences |
+| Generic research / ideas | Topic **notes + angles** ground research, ideas, and drafts |
 | No pipeline | Kanban + calendar with explicit statuses and transitions |
 | Context-switch cost | Single local app: plan, draft, polish |
-| API cost/complexity | MVP can draft-only; post when API access allows |
+| API cost/complexity | Draft-first default; optional single-post API publish behind flag |
 
 ---
 
@@ -75,14 +77,17 @@ There is no existing app codebase. The user works as a solo developer with inter
 - API-based **thread** publish (Phase 2 posts singles only; threads stay copy/Intent-per-part).
 - Multi-replica / serverless multi-instance deploy on SQLite.
 
-### Future (post-MVP)
+### Future (post-MVP / remaining)
 
-- Trend awareness via X recent search / Grok web-grounded context.
-- Analytics (impressions if API allows) and best-time suggestions.
-- Auto-scheduling with reliable post delivery.
+- **Markdown export** (design PR 13) — not shipped.
+- Richer analytics (impressions if API allows) and best-time suggestions.
+- Auto-scheduling with reliable post delivery (worker).
 - Multi-account / multi-user with proper tenancy.
 - Media upload and richer thread composer UX.
 - Sequential API thread publish with partial-failure handling.
+- Board drag-and-drop (menu transitions are intentional for MVP).
+
+> **Note:** Web-backed **research briefs** (Grok Responses + `web_search`) and **topic-grounded** research/ideas are **already implemented** — see IMPLEMENTATION.md.
 
 ---
 
@@ -108,7 +113,7 @@ There is no existing app codebase. The user works as a solo developer with inter
 | **Board interactions (MVP)** | **Menu / select status change first**; drag-and-drop optional later | Faster to ship; fewer a11y issues |
 | **Status source of truth** | **Zod enum in app**; SQLite stores text (optional CHECK in migration) | Flexible migrations; type-safe API |
 | **Citations (MVP)** | `citationsJson` text on `content_items` (URL list)—**no** separate `content_sources` table | Avoid ER drift; enough for “source links” |
-| **UI framework** | Next.js App Router + React + Tailwind + shadcn/ui | Fast UI velocity for solo |
+| **UI framework** | Next.js App Router + React + Tailwind + shared `ui.tsx` primitives (Content Studio dark glass theme) | Shipped without full shadcn install; same velocity for solo |
 | **Project name / repo** | `x-content-planner` | Clear, searchable, ownable |
 | **Feature flags** | Env-based: `ENABLE_X_POSTING`, `ENABLE_X_SYNC` | Safe rollout of paid/risky API features |
 | **Token encryption** | AES-256-GCM; **required whenever `ENABLE_X_SYNC=true` or X account exists** | Not only “prod”—gate on X feature, not fuzzy env |
@@ -520,22 +525,26 @@ Return JSON: { "body": string, "thread": string[] | null, "notes": string }
 | Manual rewrite body | 4_000 |
 | Total few-shots | 10 tweets |
 
-Always parse with Zod; on failure, one repair retry then surface error.
+Always parse with Zod; on failure, one repair retry then surface error. **Do not** repair-retry provider billing/auth failures.
 
 **AI rate limits (process-local token bucket)**
 
 - Default: **20 requests / 5 minutes** per process for `/api/ai/*`.
 - On exceed: `429` with `{ error: "AI_RATE_LIMIT" }`.
-- Missing `XAI_API_KEY`: routes return `503` `{ error: "AI_NOT_CONFIGURED" }`; UI shows degraded mode (hide/disable AI buttons)—**shipped in PR 6**, not deferred to polish.
+- Missing `XAI_API_KEY`: routes return `503` `{ error: "AI_NOT_CONFIGURED" }`; UI shows degraded mode.
+- Billing / no credits: map to `402` `{ error: "AI_NO_CREDITS" }` (see `aiErrorJson`).
+- Research: separate timeout `XAI_RESEARCH_TIMEOUT_MS` (default 90s), **no automatic retry**.
 
-### Key screens (MVP)
+### Key screens (MVP) — shipped as Content Studio
 
-1. **Dashboard** — connected status, next ready posts, quick capture  
-2. **Topics** — CRUD topics; seed defaults: AI, Software Engineering, Cricket, Football  
-3. **Board (Kanban)** — columns by status; **status change via menu/select** (drag optional later)  
-4. **Calendar** — week view of `scheduledFor` range + optional unscheduled-ready sidebar  
-5. **Post editor** — body, multi-textarea thread parts, variants, AI actions, topic tag, status, citations  
-6. **Settings** — X connect / reconnect-with-posting / disconnect, voice rebuild, manual voice notes, preferences, feature flags, last errors  
+1. **Dashboard** — X/AI/pipeline stats, ready list, quick capture, workflow steps  
+2. **Topics** — CRUD; notes + angles; research brief + AI ideas → draft (auto-save context)  
+3. **Board (Kanban)** — status columns with accents; **status via select**; inline quick-add  
+4. **Calendar** — week view of `scheduledFor` + unscheduled-ready list  
+5. **Post editor** — body, thread parts, polish/rewrite, Intent/copy, optional Post to X  
+6. **Settings** — X connect / reconnect-with-posting / disconnect, voice, env feature flags  
+
+Mobile: bottom tab navigation. Design system: `src/components/ui.tsx` + `globals.css`.
 
 ### X API realities (must design around)
 
@@ -700,25 +709,48 @@ Greenfield — all interfaces are new. **Primary surface: Route Handlers.**
 | `POST` | `/api/posts/:id/mark-posted` | Manual post: `posted` + `postedAt`; optional `xPostId` |
 | `POST` | `/api/posts/:id/publish` | API post if enabled; **idempotent** |
 
-### AI
+### AI & research
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/ai/ideas` | Generate ideas for topic |
-| `POST` | `/api/ai/draft` | Draft from idea/topic |
+| `POST` | `/api/ai/ideas` | Generate ideas; optional live `notes`, `angles`, `seed` |
+| `POST` | `/api/ai/draft` | Draft; optional `notes`, `angles`, `researchBriefId` |
 | `POST` | `/api/ai/rewrite` | Variant rewrite |
 | `POST` | `/api/ai/polish` | Tighten / fit length |
 | `POST` | `/api/ai/rebuild-voice` | Rebuild voice profile |
+| `POST` | `/api/research` | Web-backed brief; optional `notes`, `angles`, `direction` |
+
+**Grounding rule:** Research, ideas, and drafts prioritize topic **notes** and **angles** over a generic topic-name search. Topics UI auto-saves form fields before AI actions. Runtime details: [IMPLEMENTATION.md](./IMPLEMENTATION.md).
 
 ### Example payloads
 
 ```ts
+// POST /api/research
+{
+  "topicId": "01H...",
+  "direction": "focus on transfer window rumors",
+  "notes": "Prefer Premier League; ignore fantasy tips",
+  "angles": ["Contrarian transfer take", "Tactical observation"]
+}
+
+// POST /api/ai/ideas
+{
+  "topicId": "01H...",
+  "count": 5,
+  "seed": "optional",
+  "notes": "…",
+  "angles": ["…"]
+}
+
 // POST /api/ai/draft
 {
   "topicId": "01H...",
   "idea": "Why evals matter more than model size for product AI",
   "format": "single",
-  "save": true
+  "save": true,
+  "researchBriefId": "01H...",
+  "notes": "…",
+  "angles": ["…"]
 }
 
 // GET /api/x/status
@@ -857,6 +889,24 @@ export const contentVariants = sqliteTable(
   },
   (t) => ({
     byContent: index("variants_content_idx").on(t.contentItemId),
+  })
+);
+
+// Implemented: web research briefs (see IMPLEMENTATION.md)
+export const researchBriefs = sqliteTable(
+  "research_briefs",
+  {
+    id: text("id").primaryKey(),
+    profileId: text("profile_id").notNull(),
+    topicId: text("topic_id").notNull(),
+    query: text("query").notNull(),
+    summary: text("summary").notNull(),
+    citationsJson: text("citations_json").notNull().default("[]"),
+    modelUsed: text("model_used").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => ({
+    byTopic: index("research_briefs_topic_idx").on(t.topicId, t.createdAt),
   })
 );
 ```
@@ -1011,25 +1061,26 @@ DATA_DIR=./data
 # Generate: openssl rand -base64 32
 TOKEN_ENCRYPTION_KEY=
 
-# xAI
+# xAI (server-only; requires team credits on console.x.ai)
 XAI_API_KEY=
 XAI_MODEL=grok-4.5
 XAI_BASE_URL=https://api.x.ai/v1
 XAI_TIMEOUT_MS=20000
+XAI_RESEARCH_TIMEOUT_MS=90000
 
 # X API — confidential web app in developer portal
+# Callback (configured in portal): http://localhost:3000/api/auth/x/callback
 X_CLIENT_ID=
 X_CLIENT_SECRET=
-X_CALLBACK_URL=http://localhost:3000/api/auth/x/callback
-# MVP read scopes (posting added only via reconnect intent, not silent env bump):
-X_SCOPES=tweet.read users.read offline.access
-X_SCOPES_WITH_WRITE=tweet.read users.read offline.access tweet.write
+X_SCOPES_READ=tweet.read users.read offline.access
+X_SCOPES_POSTING=tweet.read users.read offline.access tweet.write
 
 # Feature flags
-ENABLE_X_SYNC=true
+ENABLE_X_SYNC=false
 ENABLE_X_POSTING=false
-SEED_SAMPLE_DATA=false
+DEFAULT_CHAR_LIMIT=280
 ```
+
 
 ---
 
@@ -1132,13 +1183,16 @@ Solo MVP target: **~2–4 weeks** elapsed, not a tight 5+3+4+3 calendar without 
 | 7 | Sync user tweets or graceful 403 + manual voice notes; rebuild voice | PR 9 |
 | 8 | Calendar week by `scheduledFor` + unscheduled-ready toggle | PR 10 |
 | 9 | Dashboard polish, errors, README first-run | PR 11 |
-| 10 | (Phase 2) Publish single with idempotency; re-OAuth for write | PR 12 |
+| 10 | (Phase 2) Publish single with re-OAuth for write | PR 12 (**shipped**) |
+| 11 | Research brief + notes/angles grounding | PR 14 (**shipped** — see IMPLEMENTATION) |
+| 12 | Markdown export | PR 13 (**not started**) |
 
 ### Success criteria (MVP qualitative)
 
 - Connect X **or** run fully offline with manual voice notes.
 - Create topics and move posts through statuses via transition rules.
 - Generate ≥1 draft per primary topic in &lt; 15s when AI configured.
+- Research/ideas reflect topic **notes and angles**, not only the topic name.
 - Short single: Copy + Intent; threads: copy-all / copy-part without single Intent URL.
 - No double-post path when Phase 2 publish enabled (guards present).
 
@@ -1319,18 +1373,18 @@ Incremental, independently reviewable PRs. Each leaves `main` buildable.
   - DoD rows 1–9 manually verified.
   - README covers env, OAuth portal, backup script, Intent vs API post.
 
-### PR 12 (Phase 2): Optional API posting (singles only)
+### PR 12 (Phase 2): Optional API posting (singles only) — **SHIPPED**
 
 - **Title:** `feat(x-post): single-tweet publish with re-OAuth and idempotency`
 - **Files/components:** `app/api/posts/[id]/publish/route.ts`, Settings “Reconnect with posting”, scope checks
 - **Dependencies:** PR 8, PR 5
-- **Description:** `POST /2/tweets` for **non-thread** items only; `canPost`; `X_SCOPE_MISSING` / tier errors; Idempotency-Key; reject if already posted. **Threads: API publish disabled** with message to use copy/Intent-per-part.
+- **Description:** `POST /2/tweets` for **non-thread** items only; `canPost`; reject if already posted. **Threads: API publish disabled**.
 - **Acceptance:**
-  - Without `tweet.write`, publish returns `X_SCOPE_MISSING` and CTA works.
-  - Double submit does not create two tweets.
-  - Thread format returns 400 `THREAD_API_PUBLISH_UNSUPPORTED`.
+  - Without `tweet.write` / flag, publish is blocked and CTA exists.
+  - Double submit does not create two tweets when already posted.
+  - Thread format returns 400 `X_THREAD_PUBLISH_NOT_SUPPORTED` (implementation code).
 
-### PR 13 (Phase 2): Export Markdown / backup
+### PR 13 (Phase 2): Export Markdown / backup — **NOT STARTED**
 
 - **Title:** `feat(export): export posts and topics to Markdown zip`
 - **Files/components:** `app/api/export/route.ts`, Settings export
@@ -1339,6 +1393,17 @@ Incremental, independently reviewable PRs. Each leaves `main` buildable.
 - **Acceptance:**
   - Zip contains topics + posts markdown.
   - No tokens in export.
+
+### PR 14: Research briefs + topic grounding — **SHIPPED**
+
+- **Title:** `feat(research): web briefs grounded on notes/angles`
+- **Files/components:** `lib/research/brief.ts`, `app/api/research`, Topics UI, ideas/draft body fields
+- **Dependencies:** PR 6, PR 3
+- **Description:** Grok Responses + `web_search`; store `research_briefs`; pass notes/angles/seed into research, ideas, draft; Topics auto-save before AI.
+- **Acceptance:**
+  - Research without notes/angles can use topic name; with notes/angles must include them in prompt.
+  - Live form values work without a prior manual Save click.
+  - Draft with `researchBriefId` inherits citations.
 
 ### Suggested merge order
 

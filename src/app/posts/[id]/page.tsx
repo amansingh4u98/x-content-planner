@@ -3,9 +3,28 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Badge, Button, Card, Input, Label, Textarea } from "@/components/ui";
+import {
+  Alert,
+  Button,
+  Card,
+  Input,
+  Label,
+  Select,
+  Spinner,
+  StatusBadge,
+  Textarea,
+} from "@/components/ui";
 import { buildIntentUrl, formatThreadCopyAll } from "@/lib/x/intent";
 import type { PostStatus } from "@/lib/posts/transitions";
+import {
+  ArrowLeft,
+  Copy,
+  ExternalLink,
+  Plus,
+  Rocket,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 
 type Post = {
   id: string;
@@ -35,13 +54,15 @@ export default function PostEditorPage() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [aiOk, setAiOk] = useState(false);
+  const [canPost, setCanPost] = useState(false);
   const [error, setError] = useState("");
 
   async function load() {
-    const [p, t, h] = await Promise.all([
+    const [p, t, h, x] = await Promise.all([
       fetch(`/api/posts/${id}`).then((r) => r.json()),
       fetch("/api/topics").then((r) => r.json()),
       fetch("/api/health").then((r) => r.json()),
+      fetch("/api/x/status").then((r) => r.json()),
     ]);
     if (!p.post) {
       setError("Post not found");
@@ -64,6 +85,7 @@ export default function PostEditorPage() {
     }
     setTopics(t.topics ?? []);
     setAiOk(Boolean(h.features?.ai));
+    setCanPost(Boolean(x.canPost));
   }
 
   useEffect(() => {
@@ -72,6 +94,7 @@ export default function PostEditorPage() {
 
   const intent = useMemo(() => buildIntentUrl(body), [body]);
   const charCount = body.length;
+  const overLimit = charCount > 280;
 
   async function save(extra?: Record<string, unknown>) {
     setBusy(true);
@@ -90,9 +113,6 @@ export default function PostEditorPage() {
         if (scheduledFor) {
           payload.scheduledFor = new Date(scheduledFor).toISOString();
         }
-      }
-      if (status === "ready" && scheduledFor === "") {
-        // ok
       }
       const res = await fetch(`/api/posts/${id}`, {
         method: "PATCH",
@@ -133,6 +153,29 @@ export default function PostEditorPage() {
     }
   }
 
+  async function publishToX() {
+    if (
+      !window.confirm(
+        "Post this single draft to X now? This cannot be undone here."
+      )
+    )
+      return;
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/posts/${id}/publish`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "X publish failed");
+      setPost(data.post);
+      setStatus("posted");
+      setMsg("Posted to X");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function copyText(text: string) {
     await navigator.clipboard.writeText(text);
     setMsg("Copied to clipboard");
@@ -149,7 +192,8 @@ export default function PostEditorPage() {
         body: JSON.stringify({ body }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Polish failed");
+      if (!res.ok)
+        throw new Error(data.message || data.error || "Polish failed");
       setBody(data.draft.body);
       if (data.draft.thread) setThread(data.draft.thread);
       setMsg("Polished — save to keep");
@@ -171,7 +215,8 @@ export default function PostEditorPage() {
         body: JSON.stringify({ body, kind }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Rewrite failed");
+      if (!res.ok)
+        throw new Error(data.message || data.error || "Rewrite failed");
       setBody(data.draft.body);
       if (data.draft.thread) setThread(data.draft.thread);
       else if (kind !== "thread") setThread([]);
@@ -185,34 +230,63 @@ export default function PostEditorPage() {
 
   if (error && !post) {
     return (
-      <p className="text-red-400">
-        {error} — <Link href="/board">Back to board</Link>
-      </p>
+      <div className="mx-auto max-w-lg space-y-3 py-16 text-center">
+        <Alert tone="danger">{error}</Alert>
+        <Link href="/board">
+          <Button variant="secondary">Back to board</Button>
+        </Link>
+      </div>
     );
   }
   if (!post) {
-    return <p className="text-zinc-500">Loading…</p>;
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center gap-2 text-sm text-zinc-500">
+        <Spinner /> Loading editor…
+      </div>
+    );
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <Link href="/board" className="text-sm text-sky-400">
-          ← Board
+    <div className="mx-auto max-w-3xl animate-fade-up space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link
+          href="/board"
+          className="inline-flex items-center gap-1.5 text-sm text-zinc-400 transition hover:text-sky-300"
+        >
+          <ArrowLeft size={14} /> Board
         </Link>
-        <Badge>{status}</Badge>
+        <div className="flex items-center gap-2">
+          <StatusBadge status={status} />
+          {post.xPostId && (
+            <a
+              href={`https://x.com/i/status/${post.xPostId}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-sky-400 hover:underline"
+            >
+              View on X
+            </a>
+          )}
+        </div>
       </div>
+
+      {(msg || error) && (
+        <Alert tone={error ? "danger" : "success"}>{error || msg}</Alert>
+      )}
 
       <Card className="space-y-4">
         <div>
           <Label>Title</Label>
-          <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Optional short label"
+          />
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <Label>Status</Label>
-            <select
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+            <Select
               value={status}
               onChange={(e) => setStatus(e.target.value as PostStatus)}
             >
@@ -230,12 +304,11 @@ export default function PostEditorPage() {
                   {s}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div>
             <Label>Topic</Label>
-            <select
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+            <Select
               value={topicId}
               onChange={(e) => setTopicId(e.target.value)}
             >
@@ -245,7 +318,7 @@ export default function PostEditorPage() {
                   {t.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
         </div>
         {status === "scheduled" && (
@@ -259,21 +332,30 @@ export default function PostEditorPage() {
           </div>
         )}
         <div>
-          <div className="mb-1 flex justify-between">
-            <Label>Body</Label>
+          <div className="mb-1 flex items-center justify-between">
+            <Label className="mb-0">Body</Label>
             <span
-              className={`text-xs ${
-                charCount > 280 ? "text-amber-400" : "text-zinc-500"
+              className={`text-xs tabular-nums ${
+                overLimit ? "font-medium text-amber-400" : "text-zinc-500"
               }`}
             >
-              {charCount} chars
+              {charCount}
+              <span className="text-zinc-600"> / 280</span>
             </span>
           </div>
           <Textarea
-            rows={6}
+            rows={7}
             value={body}
             onChange={(e) => setBody(e.target.value)}
+            placeholder="Write your post…"
+            className="font-[inherit] leading-relaxed"
           />
+          {overLimit && (
+            <p className="mt-1.5 text-xs text-amber-400/90">
+              Over standard 280 chars — fine for Premium long-form; Intent may
+              fail for very long text.
+            </p>
+          )}
         </div>
 
         <div>
@@ -282,44 +364,59 @@ export default function PostEditorPage() {
             <Button
               type="button"
               variant="ghost"
+              size="sm"
               onClick={() => setThread((t) => [...t, ""])}
             >
-              + Part
+              <Plus size={14} /> Part
             </Button>
           </div>
+          {thread.length === 0 && (
+            <p className="rounded-xl border border-dashed border-white/10 px-3 py-4 text-center text-xs text-zinc-600">
+              No thread parts — single post mode.
+            </p>
+          )}
           {thread.map((part, i) => (
-            <div key={i} className="mb-2">
-              <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
-                <span>
+            <div
+              key={i}
+              className="mb-2 rounded-xl border border-white/10 bg-black/15 p-2.5"
+            >
+              <div className="mb-1.5 flex items-center justify-between text-xs text-zinc-500">
+                <span className="font-medium text-zinc-400">
                   Part {i + 1}/{thread.length}
+                  <span className="ml-2 tabular-nums text-zinc-600">
+                    {part.length} chars
+                  </span>
                 </span>
-                <div className="flex gap-2">
-                  <button
+                <div className="flex gap-1">
+                  <Button
                     type="button"
-                    className="text-sky-400"
+                    variant="ghost"
+                    size="sm"
                     onClick={() => copyText(part)}
                   >
-                    Copy
-                  </button>
+                    <Copy size={12} />
+                  </Button>
                   {buildIntentUrl(part).url && (
                     <a
-                      className="text-sky-400"
                       href={buildIntentUrl(part).url!}
                       target="_blank"
                       rel="noreferrer"
                     >
-                      Intent
+                      <Button type="button" variant="ghost" size="sm">
+                        <ExternalLink size={12} />
+                      </Button>
                     </a>
                   )}
-                  <button
+                  <Button
                     type="button"
-                    className="text-red-400"
+                    variant="ghost"
+                    size="sm"
                     onClick={() =>
                       setThread((t) => t.filter((_, j) => j !== i))
                     }
                   >
-                    Remove
-                  </button>
+                    <Trash2 size={12} className="text-red-400" />
+                  </Button>
                 </div>
               </div>
               <Textarea
@@ -335,8 +432,8 @@ export default function PostEditorPage() {
           ))}
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={() => save()} disabled={busy}>
+        <div className="flex flex-wrap gap-2 border-t border-white/[0.06] pt-4">
+          <Button onClick={() => save()} disabled={busy} loading={busy}>
             Save
           </Button>
           <Button
@@ -345,7 +442,7 @@ export default function PostEditorPage() {
             onClick={polish}
             title={aiOk ? "Polish with Grok" : "Set XAI_API_KEY"}
           >
-            Polish
+            <Sparkles size={14} /> Polish
           </Button>
           <Button
             variant="secondary"
@@ -372,14 +469,21 @@ export default function PostEditorPage() {
       </Card>
 
       <Card className="space-y-3">
-        <h2 className="text-sm font-medium">Ready to post</h2>
-        <p className="text-xs text-zinc-500">
-          Draft-first: copy to clipboard or open X Web Intent. Threads never use
-          a single Intent URL.
-        </p>
+        <div className="flex items-center gap-2">
+          <span className="grid size-8 place-items-center rounded-lg bg-sky-500/15 text-sky-300">
+            <Rocket size={15} />
+          </span>
+          <div>
+            <h2 className="text-sm font-semibold">Ready to post</h2>
+            <p className="text-xs text-zinc-500">
+              Draft-first: copy or open X Intent. Threads never use a single
+              Intent URL.
+            </p>
+          </div>
+        </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => copyText(body)}>
-            Copy body
+            <Copy size={14} /> Copy body
           </Button>
           {thread.length > 0 && (
             <Button
@@ -394,13 +498,28 @@ export default function PostEditorPage() {
               href={intent.url!}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500"
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-gradient-to-b from-sky-400 to-sky-600 px-3.5 py-2 text-sm font-medium text-white shadow-[0_8px_24px_rgba(2,132,199,0.24)] transition hover:-translate-y-0.5 hover:from-sky-300 hover:to-sky-500"
             >
-              Open in X
+              <ExternalLink size={14} /> Open in X
             </a>
           ) : (
             <Button variant="ghost" disabled title="URL too long for Intent">
               Open in X (too long — copy only)
+            </Button>
+          )}
+          {status !== "posted" && (
+            <Button
+              onClick={publishToX}
+              disabled={
+                busy || !canPost || thread.length > 0 || !body.trim()
+              }
+              title={
+                canPost
+                  ? "Posts this single draft directly to X"
+                  : "Reconnect X with posting permission and enable X posting"
+              }
+            >
+              Post to X now
             </Button>
           )}
           {status !== "posted" && (
@@ -410,12 +529,6 @@ export default function PostEditorPage() {
           )}
         </div>
       </Card>
-
-      {(msg || error) && (
-        <p className={`text-sm ${error ? "text-red-400" : "text-emerald-400"}`}>
-          {error || msg}
-        </p>
-      )}
     </div>
   );
 }

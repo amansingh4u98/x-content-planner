@@ -20,6 +20,7 @@ export const config = {
     baseUrl: process.env.XAI_BASE_URL ?? "https://api.x.ai/v1",
     model: process.env.XAI_MODEL ?? "grok-4.5",
     timeoutMs: Number(process.env.XAI_TIMEOUT_MS ?? 20_000),
+    researchTimeoutMs: Number(process.env.XAI_RESEARCH_TIMEOUT_MS ?? 90_000),
   },
   x: {
     clientId: process.env.X_CLIENT_ID ?? "",

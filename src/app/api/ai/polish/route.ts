@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
+  aiErrorJson,
   chatJson,
   DraftResultSchema,
   isAiConfigured,
@@ -50,9 +51,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: e.flatten() }, { status: 400 });
     }
     console.error("ai/polish", e);
-    return NextResponse.json(
-      { error: "AI_FAILED", message: (e as Error).message },
-      { status: 500 }
-    );
+    const { body, status } = aiErrorJson(e);
+    return NextResponse.json(body, { status });
   }
 }

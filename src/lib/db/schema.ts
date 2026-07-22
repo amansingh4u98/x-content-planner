@@ -112,3 +112,18 @@ export const contentVariants = sqliteTable(
   },
   (t) => [index("variants_content_idx").on(t.contentItemId)]
 );
+
+export const researchBriefs = sqliteTable(
+  "research_briefs",
+  {
+    id: text("id").primaryKey(),
+    profileId: text("profile_id").notNull(),
+    topicId: text("topic_id").notNull(),
+    query: text("query").notNull(),
+    summary: text("summary").notNull(),
+    citationsJson: text("citations_json").notNull().default("[]"),
+    modelUsed: text("model_used").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("research_briefs_topic_idx").on(t.topicId, t.createdAt)]
+);
